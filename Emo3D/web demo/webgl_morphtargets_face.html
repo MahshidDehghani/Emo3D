@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>Emo3d - Text to Facial Expression</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+		<style>
+			body {
+				background-color: #666666;
+			}
+			#inputContainer {
+				position: absolute;
+				top: 80px;
+				left: 50%;
+				transform: translateX(-50%);
+				z-index: 100;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				background-color: rgba(0, 0, 0, 0.5);
+				padding: 15px;
+				border-radius: 5px;
+				color: white;
+			}
+			#textInput {
+				margin: 10px 0;
+				padding: 8px;
+				width: 300px;
+				border-radius: 4px;
+				border: none;
+			}
+			#submitButton {
+				padding: 8px 15px;
+				background-color: #978eeb;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+			}
+			#submitButton:hover {
+				background-color: #7265e7;
+			}
+		</style>
+	</head>
+	<body>
+		
+		<div id="info">
+			<a href="https://github.com" target="_blank" rel="noopener">Emo3D</a> Text to Expression<br/>
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgl - morph targets - face<br/>
+			model by <a href="https://www.bannaflak.com/face-cap" target="_blank" rel="noopener">Face Cap</a>
+		</div>
+
+		<div id="inputContainer">
+			<input type="text" id="textInput" placeholder="Enter text like slightly surprise">
+			<button id="submitButton">Apply Expression</button>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "https://unpkg.com/three@0.149.0/build/three.module.js",
+					"three/addons/": "https://unpkg.com/three@0.149.0/examples/jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+
+			import Stats from 'three/addons/libs/stats.module.js';
+
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+			import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+			import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+			import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+			let camera, scene, renderer, stats, controls;
+
+			// Function to apply controller values to the face model
+			function applyControllerValues(controllerValues) {
+				console.log('Received controller values:', controllerValues);
+				
+				const head = scene.getObjectByName('mesh_2');
+				if (!head) {
+					console.error('Face mesh not found');
+					return;
+				}
+
+				const influences = head.morphTargetInfluences;
+				const dictionary = head.morphTargetDictionary;
+				
+				console.log('Available morph targets:', dictionary);
+				console.log('Current influences:', influences);
+
+				// Apply each controller value to the corresponding morph target
+				for (const [controllerName, value] of Object.entries(controllerValues)) {
+					// Convert value to number
+					const numValue = parseFloat(value);
+					
+					// Try both with and without the blendShape1 prefix
+					const morphTargetKey = `blendShape1.${controllerName}`;
+					const morphTargetIndex = dictionary[morphTargetKey];
+					
+					if (morphTargetIndex !== undefined) {
+						influences[morphTargetIndex] = numValue;
+						console.log(`Applied ${controllerName}: ${numValue} to index ${morphTargetIndex}`);
+					} else {
+						// Try without the blendShape1 prefix
+						const morphTargetIndexAlt = dictionary[controllerName];
+						if (morphTargetIndexAlt !== undefined) {
+							influences[morphTargetIndexAlt] = numValue;
+							console.log(`Applied ${controllerName}: ${numValue} to index ${morphTargetIndexAlt} (without prefix)`);
+						} else {
+							console.warn(`Morph target not found for controller: ${controllerName}`);
+							console.log('Available morph targets:', Object.keys(dictionary));
+						}
+					}
+				}
+				
+				// Force update the mesh
+				head.morphTargetInfluences = influences;
+				console.log('Updated influences:', influences);
+			}
+
+			// Add event listener for the submit button
+			document.getElementById('submitButton').addEventListener('click', async () => {
+				const text = document.getElementById('textInput').value;
+				if (!text) {
+					alert('Please enter some text');
+					return;
+				}
+				
+				try {
+					console.log('Sending text to server:', text);
+					const response = await fetch('http://127.0.0.1:5003/process_text', {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+							'Accept': 'application/json'
+						},
+						body: JSON.stringify({ text: text })
+					});
+					
+					if (!response.ok) {
+						throw new Error(`HTTP error! status: ${response.status}`);
+					}
+					
+					const data = await response.json();
+					console.log('Server response:', data);
+					
+					if (data.error) {
+						throw new Error(data.error);
+					}
+					
+					console.log('Success:', data.message);
+					// Apply the controller values to the face model
+					applyControllerValues(data.controller_values);
+					
+				} catch (error) {
+					console.error('Error:', error);
+					alert('Error: ' + error.message);
+				}
+			});
+
+			init();
+
+			function init() {
+
+				const container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 20 );
+				camera.position.set( - 1.8, 0.8, 3 );
+
+				scene = new THREE.Scene();
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setAnimationLoop( animate );
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+				container.appendChild( renderer.domElement );
+
+				const ktx2Loader = new KTX2Loader()
+    					.setTranscoderPath('https://unpkg.com/three@0.149.0/examples/jsm/libs/basis/')
+    					.detectSupport(renderer);
+
+				new GLTFLoader()
+					.setKTX2Loader( ktx2Loader )
+					.setMeshoptDecoder( MeshoptDecoder )
+					.load( 'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/facecap.glb', ( gltf ) => {
+
+						const mesh = gltf.scene.children[ 0 ];
+						scene.add( mesh );
+
+						// GUI
+						const head = mesh.getObjectByName( 'mesh_2' );
+						if (!head) {
+							console.error('Head mesh not found in the model');
+							return;
+						}
+
+						console.log('Loaded head mesh with morph targets:', head.morphTargetDictionary);
+						
+						const influences = head.morphTargetInfluences;
+						// Set all morph target influences to 0 for neutral expression
+						for (let i = 0; i < influences.length; i++) {
+							influences[i] = 0;
+						}
+						
+						// Force update the mesh
+						head.morphTargetInfluences = influences;
+						console.log('Initialized morph target influences:', influences);
+
+						const gui = new GUI();
+						gui.close();
+
+						for ( const [ key, value ] of Object.entries( head.morphTargetDictionary ) ) {
+							gui.add( influences, value, 0, 1, 0.01 )
+								.name( key.replace( 'blendShape1.', '' ) )
+								.listen();
+						}
+					} );
+
+				const environment = new RoomEnvironment();
+				const pmremGenerator = new THREE.PMREMGenerator( renderer );
+
+				scene.background = new THREE.Color( 0x666666 );
+				scene.environment = pmremGenerator.fromScene( environment ).texture;
+
+				controls = new OrbitControls( camera, renderer.domElement );
+				controls.enableDamping = true;
+				controls.minDistance = 2.5;
+				controls.maxDistance = 5;
+				controls.minAzimuthAngle = - Math.PI / 2;
+				controls.maxAzimuthAngle = Math.PI / 2;
+				controls.maxPolarAngle = Math.PI / 1.8;
+				controls.target.set( 0, 0.15, - 0.2 );
+
+				// stats = new Stats();
+				// container.appendChild( stats.dom );
+
+				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function animate() {
+
+				renderer.render( scene, camera );
+
+				controls.update();
+
+				// stats.update();
+
+			}
+
+		</script>
+	</body>
+</html>
